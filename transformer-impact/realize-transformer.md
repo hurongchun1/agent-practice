@@ -24,6 +24,15 @@
   - [4.7 前馈网络与第二次残差连接](#47-前馈网络与第二次残差连接)
   - [4.8 多个 EncoderLayer 的堆叠](#48-多个-encoderlayer-的堆叠)
   - [4.9 与当前代码的对应关系](#49-与当前代码的对应关系)
+- [5. Transformer 解码器：查询原文并逐步生成结果](#5-transformer-解码器查询原文并逐步生成结果)
+  - [5.1 先理解 Encoder 输出的形状](#51-先理解-encoder-输出的形状)
+  - [5.2 BOS 与 EOS：从哪里开始，在哪里结束](#52-bos-与-eos从哪里开始在哪里结束)
+  - [5.3 Decoder 怎样逐步生成内容](#53-decoder-怎样逐步生成内容)
+  - [5.4 DecoderLayer 的三个处理阶段](#54-decoderlayer-的三个处理阶段)
+  - [5.5 Encoder 与 Decoder 怎样交互](#55-encoder-与-decoder-怎样交互)
+  - [5.6 完整翻译过程](#56-完整翻译过程)
+  - [5.7 Encoder-only、Decoder-only 和 Encoder-Decoder](#57-encoder-onlydecoder-only-和-encoder-decoder)
+- [6. 最终总结](#6-最终总结)
 
 ## 1. CNN：擅长观察局部特征
 
@@ -649,6 +658,26 @@ flowchart TB
 保存整理结果：第二次残差连接
 ```
 
+如果当前目标只是理解 Encoder 的底层数据流，可以先用下面这张表掌握一个 `EncoderLayer` 的核心操作：
+
+| 模块 | 输入 | token 是否交流 | 主要作用 |
+|---|---|---|---|
+| 多头自注意力 | 所有 token 的向量 | 是 | 从多个角度交换和汇总上下文信息 |
+| 残差连接 | 子模块原输入和新输出 | 否 | 保留原信息，同时加入新获得的信息 |
+| LayerNorm | 残差相加后的向量 | 否 | 整理数值分布，让训练更加稳定 |
+| 前馈网络 | 每个 token 的向量 | 否 | 对每个 token 独立提取和转换特征 |
+
+四个模块可以进一步记成：
+
+```text
+多头自注意力：集体交流
+残差连接：    原资料 + 新收获
+LayerNorm：   整理数值
+前馈网络：    每个人独立消化信息
+```
+
+这张表已经足够用来理解“一个 EncoderLayer 如何处理数据”。如果以后需要自己实现 Transformer，还需要继续理解 Q、K、V 的计算、注意力公式、Mask 和张量形状变化。
+
 ### 4.2 Embedding 与位置编码
 
 神经网络不能直接计算文字，因此首先需要把词转换成编号：
@@ -1006,3 +1035,331 @@ Query 与所有 Key 比较，得到注意力权重
     ↓
 最终交给 Decoder
 ```
+
+## 5. Transformer 解码器：查询原文并逐步生成结果
+
+Encoder 的任务是理解输入，Decoder 的任务是生成输出。继续使用前面的翻译例子：
+
+```text
+原文：I love apples
+译文：我爱苹果
+```
+
+可以先记住两者的分工：
+
+```text
+Encoder：阅读并理解 I love apples
+Decoder：查询 Encoder 的理解结果，逐步生成“我爱苹果”
+```
+
+### 5.1 先理解 Encoder 输出的形状
+
+文档前面提到，Encoder 最终输出：
+
+```text
+[batch_size, 3, 512]
+```
+
+这三个维度依次表示：
+
+```text
+[一次处理多少个句子, 每个句子有多少个 token, 每个 token 用多少个数字表示]
+```
+
+在当前例子中，如果一次只处理 `I love apples` 这一个句子，那么：
+
+```text
+batch_size = 1
+token 数量 = 3
+d_model = 512
+
+Encoder 输出形状 = [1, 3, 512]
+```
+
+其中：
+
+```text
+1：一次处理 1 个句子
+3：句子中有 I、love、apples 这 3 个 token
+512：每个 token 使用一个 512 维向量表示
+```
+
+也就是说，Encoder 会输出三个上下文向量：
+
+```text
+E_I       = 512 个数字
+E_love    = 512 个数字
+E_apples  = 512 个数字
+```
+
+`d_model` 就是模型用多少维向量表示一个 token。如果 `d_model=512`，每个普通 token 和特殊 token 都会在模型内部表示为 512 维向量。
+
+为了方便观察，可以暂时把 `d_model` 缩小成 4：
+
+```text
+I       → [0.8, 0.2, 0.1, 0.5]
+love    → [0.4, 0.9, 0.7, 0.3]
+apples  → [0.2, 0.1, 0.8, 0.6]
+```
+
+此时一个句子的输出形状是 `[1, 3, 4]`。真实模型只是把最后的 4 换成 512，处理思路不变。
+
+### 5.2 BOS 与 EOS：从哪里开始，在哪里结束
+
+在经典的 Encoder-Decoder 生成过程中，通常会使用两个特殊 token：
+
+```text
+<BOS>：Beginning Of Sequence，表示开始生成
+<EOS>：End Of Sequence，表示生成结束
+```
+
+它们不是用户真正要阅读的文字，而是词表中的特殊标记。可以简单理解为：
+
+```text
+<BOS>：现在开始写
+<EOS>：已经写完，可以停止
+```
+
+为什么需要 `<BOS>`？因为 Decoder 预测第一个词时，前面还没有任何内容，所以需要一个开始信号：
+
+```text
+输入 Decoder：<BOS>
+期望预测：    我
+```
+
+为什么需要 `<EOS>`？因为模型需要知道句子在哪里结束：
+
+```text
+输入 Decoder：<BOS> 我 爱 苹果
+期望预测：    <EOS>
+```
+
+当生成程序检测到 `<EOS>` 时，就可以停止继续生成。不同模型和分词器使用的特殊 token 名称可能不同，但“标记开始或结束”的作用是相似的。
+
+### 5.3 Decoder 怎样逐步生成内容
+
+Decoder 本身负责预测下一个 token。程序选择出一个 token 后，会把它接到已有内容后面，再交给 Decoder 继续预测：
+
+```text
+<BOS>             → Decoder 预测“我”
+<BOS> 我          → Decoder 预测“爱”
+<BOS> 我 爱       → Decoder 预测“苹果”
+<BOS> 我 爱 苹果  → Decoder 预测<EOS>
+```
+
+所以，不是模型先在外部预测完成，再把结果交给 Decoder。更准确的过程是：
+
+```text
+Decoder 预测下一个 token
+        ↓
+程序选择一个 token
+        ↓
+将它追加到已有序列
+        ↓
+再次送入 Decoder
+        ↓
+继续预测，直到得到<EOS>
+```
+
+这种根据已经生成的内容继续预测后续内容的方式叫作**自回归生成**。
+
+训练时，正确译文已经存在，因此可以把输入和答案错开一个位置：
+
+```text
+Decoder 输入：<BOS> 我 爱 苹果
+正确答案：       我 爱 苹果 <EOS>
+```
+
+它表示：
+
+```text
+看到<BOS>       → 学习预测“我”
+看到“我”         → 学习预测“爱”
+看到“爱”         → 学习预测“苹果”
+看到“苹果”       → 学习预测<EOS>
+```
+
+### 5.4 DecoderLayer 的三个处理阶段
+
+前面学过的一个 `EncoderLayer` 主要包含：
+
+```text
+多头自注意力
+→ 残差连接 + LayerNorm
+→ 前馈网络
+→ 残差连接 + LayerNorm
+```
+
+一个经典的 `DecoderLayer` 则包含三个子模块：
+
+```text
+带遮挡的多头自注意力
+→ 第一次残差连接 + LayerNorm
+→ 交叉注意力
+→ 第二次残差连接 + LayerNorm
+→ 前馈网络
+→ 第三次残差连接 + LayerNorm
+```
+
+第一步是**带遮挡的自注意力**。它让 Decoder 理解已经生成的内容，但是不能提前看到未来的正确答案：
+
+```text
+处理“我”时：   只能看<BOS>和“我”
+处理“爱”时：   只能看<BOS>、“我”和“爱”
+处理“苹果”时： 只能看<BOS>、“我”、“爱”和“苹果”
+```
+
+这种限制由因果 Mask 实现。它保证模型学习的是“根据前文预测下一个 token”，而不是偷看后面的答案。
+
+第二步是**交叉注意力**。Decoder 在这里查询 Encoder 对原文的理解结果。
+
+第三步是**前馈网络**。和 Encoder 一样，每个位置独立整理注意力阶段获得的信息。
+
+继续使用前面的比喻：
+
+```text
+带遮挡的自注意力：目标词在不偷看未来的情况下开会
+交叉注意力：      拿着当前问题查询 Encoder 的原文笔记
+前馈网络：        每个位置独立整理获得的信息
+```
+
+### 5.5 Encoder 与 Decoder 怎样交互
+
+Encoder 与 Decoder 真正发生交互的地方是**交叉注意力**。这里 Q、K、V 的来源与 Encoder 自注意力不同：
+
+```text
+Q：来自 Decoder 当前状态
+K：来自 Encoder 最终输出
+V：来自 Encoder 最终输出
+```
+
+可以这样理解：
+
+```text
+Decoder 的 Query：我现在需要查询什么原文信息？
+Encoder 的 Key：  原文的哪些位置与这个问题匹配？
+Encoder 的 Value：匹配以后，实际取回什么信息？
+```
+
+例如，Decoder 已经生成：
+
+```text
+<BOS> 我 爱
+```
+
+现在准备预测下一个词。Decoder 产生的 Query 会与 Encoder 输出的三个 Key 比较：
+
+```text
+Decoder Query
+    ├── 与 K_I 比较
+    ├── 与 K_love 比较
+    └── 与 K_apples 比较
+```
+
+假设得到的注意力权重是：
+
+```text
+关注 I：       5%
+关注 love：   15%
+关注 apples：80%
+```
+
+那么 Decoder 从 Encoder 取回的信息就是：
+
+```text
+当前需要的原文信息
+= 5%  × V_I
++ 15% × V_love
++ 80% × V_apples
+```
+
+结合已经生成的“我 爱”和取回的原文信息后，Decoder 更有可能预测出“苹果”。
+
+三种注意力的 Q、K、V 来源可以对比记忆：
+
+| 注意力类型 | Q 来自哪里 | K 来自哪里 | V 来自哪里 |
+|---|---|---|---|
+| Encoder 自注意力 | Encoder | Encoder | Encoder |
+| Decoder 带遮挡自注意力 | Decoder | Decoder | Decoder |
+| Decoder 交叉注意力 | Decoder | Encoder | Encoder |
+
+Encoder 通常只需要对原文计算一次。之后，Decoder 每生成一个新 token，都会再次查询同一组 Encoder 输出。
+
+### 5.6 完整翻译过程
+
+将前面的步骤连接起来：
+
+```text
+原文：I love apples
+        ↓
+Embedding + 位置编码
+        ↓
+多个 EncoderLayer
+        ↓
+[E_I, E_love, E_apples]
+        ↓
+作为原文资料提供给 Decoder
+        ↓
+Decoder 输入<BOS>
+        ↓
+带遮挡自注意力：理解已经生成的内容
+        ↓
+交叉注意力：查询 Encoder 输出
+        ↓
+前馈网络：独立整理信息
+        ↓
+Linear + Softmax：得到词表中每个 token 的概率
+        ↓
+预测“我”
+        ↓
+将“我”追加到 Decoder 输入，继续预测
+        ↓
+我 → 爱 → 苹果 → <EOS>
+```
+
+一句话总结：
+
+> Encoder 把原文整理成一组包含上下文的信息；Decoder 先理解已经生成的内容，再用当前状态查询 Encoder 的理解结果，最终预测下一个 token。
+
+### 5.7 Encoder-only、Decoder-only 和 Encoder-Decoder
+
+Transformer 不只有一种固定形式。现代模型主要有三类架构：
+
+| 架构 | 保留的主要结构 | 擅长的任务 | 典型模型 |
+|---|---|---|---|
+| Encoder-only | 只使用 Encoder | 文本理解、分类、检索、生成向量 | BERT 类模型 |
+| Decoder-only | 只使用 Decoder | 续写、对话、代码生成等自回归生成任务 | GPT 类模型 |
+| Encoder-Decoder | 同时使用 Encoder 和 Decoder | 翻译、摘要以及输入到输出的转换任务 | T5、BART 类模型 |
+
+现在常见的大语言模型确实大多采用 `Decoder-only` 架构，因为它很适合统一成“根据前文预测下一个 token”的生成任务。但这不表示 Encoder 和 Decoder 已经不能同时使用。
+
+经典 Transformer、T5 和 BART 等模型仍然采用 Encoder-Decoder 架构：
+
+```text
+Encoder 专门理解输入
+Decoder 专门生成输出
+两者通过交叉注意力连接
+```
+
+`Decoder-only` 模型没有独立的 Encoder，也没有跨越两套模块的交叉注意力。它通常把用户输入和已经生成的内容放在同一条 token 序列中，再通过带因果 Mask 的自注意力不断预测下一个 token：
+
+```text
+用户输入 + 已生成内容
+          ↓
+多个 DecoderLayer
+          ↓
+预测下一个 token
+```
+
+因此，更准确的理解是：
+
+```text
+不是 Encoder 和 Decoder 不能兼容，
+而是不同模型会根据任务选择不同的 Transformer 结构。
+```
+
+## 6. 最终总结
+
+> **Encoder 的任务是“理解”输入的整个句子。** 它会读取所有输入 token，并为每个 token 生成一个包含丰富上下文信息的向量表示。
+>
+> **Decoder 的任务是“生成”目标句子。** 它会参考自己已经生成的前文，并“咨询”Encoder 的理解结果，逐步生成下一个 token，直到完成整个目标句子。
