@@ -81,3 +81,4 @@ class DecoderLayer(nn.Module):
         x = self.norm3(x + self.dropout(ff_output))
 
         return x
+
