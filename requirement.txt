@@ -1,3 +1,13 @@
+# Web 请求
 requests>=2.31.0
+
+# 搜索工具
 tavily-python>=0.3.0
+serpapi-python>=0.1.0
+
+# OpenAI 客户端
 openai>=1.35.6
+
+# 深度学习框架
+torch>=2.0.0
+transformers>=4.30.0
