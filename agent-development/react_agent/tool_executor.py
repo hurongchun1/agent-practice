@@ -1,7 +1,13 @@
 # 当智能体需要使用多种工具时（例如，除了搜索，还可能需要计算、查询数据库等），我们需要一个统一的管理器来注册和调度这些工具。
 
 from typing import Dict, Any
-from search_tool import search
+import sys
+import os
+
+# 确保 agent-development 目录在 Python 路径中（支持绝对导入，无需 __init__.py）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from react_agent.search_tool import search
 from dotenv import load_dotenv
 
 load_dotenv()

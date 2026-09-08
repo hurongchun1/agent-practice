@@ -13,11 +13,20 @@ class HelloAgentsLLM:
     """
     def __init__(self, model: str = None, apiKey: str = None, baseUrl: str = None, timeout: int = None):
         """
-        初始化客户端。优先使用传入参数，如果未提供，则从环境变量加载。
+        初始化客户端。优先使用传入参数，如果未提供，则按以下优先级加载：
+        1. 直接传入的 model/apiKey/baseUrl
+        2. 环境变量 LLM_MODEL_ID / LLM_API_KEY / LLM_BASE_URL
+        3. 如果设置了 LLM_PROVIDER=qwen，则从 QWEN_* 环境变量加载
         """
-        self.model = model or os.getenv("LLM_MODEL_ID")
-        apiKey = apiKey or os.getenv("LLM_API_KEY")
-        baseUrl = baseUrl or os.getenv("LLM_BASE_URL")
+        provider = os.getenv("LLM_PROVIDER")
+        if provider == "qwen":
+            self.model = model or os.getenv("QWEN_MODEL_ID")
+            apiKey = apiKey or os.getenv("QWEN_API_KEY")
+            baseUrl = baseUrl or os.getenv("QWEN_BASE_URL")
+        else:
+            self.model = model or os.getenv("LLM_MODEL_ID")
+            apiKey = apiKey or os.getenv("LLM_API_KEY")
+            baseUrl = baseUrl or os.getenv("LLM_BASE_URL")
         timeout = timeout or int(os.getenv("LLM_TIMEOUT", 60))
         
         if not all([self.model, apiKey, baseUrl]):

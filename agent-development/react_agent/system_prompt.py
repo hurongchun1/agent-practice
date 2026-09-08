@@ -6,7 +6,7 @@
 - 动态上下文({question}/{history})：将用户的原始问题和不断累积的交互历史注入，让LLM基于完整的上下文进行决策
 '''
 
-REACT_PROMPT_TEMPLATE=f"""
+REACT_PROMPT_TEMPLATE = """
 请注意，你是一个有能调用外部工具的智能体助手。
 
 可用工具如下：
