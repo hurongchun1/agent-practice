@@ -1,9 +1,9 @@
-import re
+import json
 
 from original_agent.build_first_agent import HelloAgentsLLM
-from .search_tool import search
-from .system_prompt import REACT_PROMPT_TEMPLATE
-from .tool_executor import ToolExecutor
+from react_agent.search_tool import search
+from react_agent.system_prompt import REACT_PROMPT_TEMPLATE
+from react_agent.tool_executor import ToolExecutor
 
 class ReActAgent():
 
@@ -42,7 +42,10 @@ class ReActAgent():
                 break
 
             # 3.解析LLM的输出
-            thought,action = self._parse_output(response_text)
+            json_data = self._parse_output(response_text)
+
+            thought = json_data.get("thought")
+            action = json_data.get("action")
 
             if thought:
                 print(f"思考：{thought}")
@@ -53,17 +56,16 @@ class ReActAgent():
                 break
 
             # 4.执行Action
-            if action.startswith("Finish"):
+            if action.startswith("finish"):
                 # 如果是Finish指令，提取最终答案并结束
-                final_match = re.search(r"Finish\[(.*)\]", action, re.DOTALL)
-                if final_match:
-                    final_answer = final_match.group(1).strip()
-                    print(f"最终答案：{final_answer}")
-                    return final_answer
-                print("Finish 指令格式无法解析，流程终止")
-                return None
+                final_answer = json_data.get("final_answer")
+                print(f"最终答案：{final_answer}")
+                return final_answer
+
             
-            tool_name, tool_input = self._parse_action(action)
+            tool_name = json_data.get("tool_name")
+            tool_input = json_data.get("tool_input")
+
             if not tool_name or not tool_input:
                 # .. 处理无效Action格式 ...
                 continue
@@ -90,24 +92,41 @@ class ReActAgent():
     
     def _parse_output(self,text:str):
         """解析LLM的输出，提取Thought和Action"""
-        # Thought：匹配到 Action：或文本末尾
-        thought_match = re.search(fr"Thought:\s*(.*?)(?=\nAction:|$)",text,re.DOTALL)
+        
+        data = json.loads(text)
+        if not isinstance(data,dict):
+            raise ValueError("必须返回一个 JSON 对象")
+        
+        action = data.get("action")
+        thought = data.get("thought")
 
-        # Action：匹配到文本末尾
-        action_match = re.search("Action:\s*(.*?)$",text,re.DOTALL)
-        thought = thought_match.group(1).strip() if thought_match else None
-        action = action_match.group(1).strip() if action_match else None
+        if action not in {"tool","finish"}:
+            raise ValueError("action 必须是 tool 或 finish")
+        
+        if not isinstance(thought,str) or not thought.strip():
+            raise ValueError("thought 必须是非空字符串")
+        
+        if action == "tool":
+            tool_name = data.get("tool_name")
+            tool_input = data.get("tool_input")
 
-        return thought,action
-    
-    def _parse_action(self,action_text:str):
-        """解析Action字符串，提取工具名称和输入"""
+            if not isinstance(tool_name,str) or not tool_name.strip():
+                raise ValueError("tool_name 必须是非空字符串")
 
-        match = re.match(r"(\w+)\[(.*)\]",action_text,re.DOTALL)
-        if match:
-            return match.group(1), match.group(2)
+            if not isinstance(tool_input,str) or not tool_input.strip():
+                raise ValueError("tool_input 必须是非空字符串")
+            
+            if self.tool_executor.getTool(tool_name) is None:
+                raise ValueError(f"未找到名为 '{tool_name}' 的工具。")
+        else :
+            # finish
+            final_answer = data.get("final_answer")
 
-        return None,None
+            if not isinstance(final_answer,str) or not final_answer.strip():
+                raise ValueError("final_answer 必须是具体的非空答案")
+        
+        return data 
+
 
 if __name__ == '__main__':
     llm = HelloAgentsLLM()
