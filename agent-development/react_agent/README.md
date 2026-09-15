@@ -4,7 +4,7 @@
 
 项目中用于解析 `Thought` 和 `Action` 的正则表达式说明，参见 [REGEX_GUIDE.md](./REGEX_GUIDE.md)。
 
-> 当前目录已经实现了“工具定义、注册与执行”这一部分，尚未实现完整的 LLM 调用、Action 解析和多轮循环。本文会同时说明完整的 ReAct 原理，以及现有代码在整个流程中的位置。
+> 当前目录已经实现了工具定义与调度、LLM 调用、Action 解析和多轮循环。统一入口是 `run.py`。
 
 ## 0. 从整体上理解 ReAct
 
@@ -115,21 +115,24 @@ Action: Finish[根据搜索结果生成的最终答案]
 ## 4. 本目录的代码结构
 
 ```text
-react-agent/
-├── README.md          # 原理、代码结构与后续实现说明
-├── search_tool.py     # 基于 SerpApi 的网页搜索工具
-├── tool-executor.py   # 工具注册、描述和查找
-├── realize-agent.md   # 预留的实现记录文件
-└── .env               # 本地环境变量，不应提交密钥
+react_agent/
+├── __init__.py        # Python 包标识
+├── run.py             # 统一运行入口
+├── react_agent.py     # ReAct 主循环与输出解析
+├── system_prompt.py   # Thought/Action 提示词协议
+├── search_tool.py     # 基于 Tavily 的网页搜索工具
+├── tool_executor.py   # 工具注册、描述和查找
+├── REGEX_GUIDE.md     # 正则表达式说明
+└── README.md          # 原理与代码结构说明
 ```
 
 ### `search_tool.py`
 
 `search(query)` 是智能体目前可使用的外部工具。它负责：
 
-- 从环境变量读取 `SERPAPI_API_KEY`；
-- 通过 SerpApi 请求 Google 搜索结果；
-- 优先返回直接答案、知识图谱描述；
+- 从环境变量读取 `TAVILY_API_KEY`；
+- 通过 Tavily 请求搜索结果；
+- 优先返回 Tavily 生成的综合答案；
 - 没有直接答案时，返回前三条自然搜索结果的标题与摘要；
 - 将缺少密钥、无结果或调用异常转换成文本结果。
 
@@ -144,6 +147,14 @@ react-agent/
 - `getAvailableTools()`：生成工具说明，供提示词告知模型“有哪些工具可用”。
 
 当前示例注册了 `Search` 工具，并演示了从 Action 到 Observation 的执行过程。这个模块相当于 ReAct 中模型与外部环境之间的适配层。
+
+### `run.py`
+
+`run.py` 负责创建公共 LLM 客户端、注册搜索工具、创建 `ReActAgent` 并提交示例问题。请从 `agent-development` 目录按模块运行：
+
+```powershell
+python -m react_agent.run
+```
 
 ## 5. 完整 ReAct Agent 还需要什么
 

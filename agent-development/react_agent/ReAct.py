@@ -1,6 +1,9 @@
 import re
-from llm_client import HelloAgentsLLM
-from tools import ToolExecutor, search
+
+from original_agent.build_first_agent import HelloAgentsLLM
+
+from .search_tool import search
+from .tool_executor import ToolExecutor
 
 # (此处省略 REACT_PROMPT_TEMPLATE 的定义)
 REACT_PROMPT_TEMPLATE = """

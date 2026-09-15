@@ -1,14 +1,9 @@
 import re
-import sys
-import os
-
-# 确保 agent-development 目录在 Python 路径中（支持绝对导入，无需 __init__.py）
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from original_agent.build_first_agent import HelloAgentsLLM
-from react_agent.tool_executor import ToolExecutor
-from react_agent.system_prompt import REACT_PROMPT_TEMPLATE
-from react_agent.search_tool import search
+from .search_tool import search
+from .system_prompt import REACT_PROMPT_TEMPLATE
+from .tool_executor import ToolExecutor
 
 class ReActAgent():
 
