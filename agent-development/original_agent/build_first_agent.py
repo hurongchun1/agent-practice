@@ -1,10 +1,12 @@
 import os
+from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
 from typing import List, Dict
 
-# 加载 .env 文件中的环境变量
-load_dotenv()
+# 明确读取本项目配置，并覆盖终端中可能残留的旧配置。
+ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(dotenv_path=ENV_PATH, override=True)
 
 class HelloAgentsLLM:
     """
@@ -15,11 +17,17 @@ class HelloAgentsLLM:
         """
         初始化客户端。优先使用传入参数，如果未提供，则按以下优先级加载：
         1. 直接传入的 model/apiKey/baseUrl
-        2. 环境变量 LLM_MODEL_ID / LLM_API_KEY / LLM_BASE_URL
-        3. 如果设置了 LLM_PROVIDER=qwen，则从 QWEN_* 环境变量加载
+        2. LLM_PROVIDER=deepseek/qwen 时，读取对应服务的专用环境变量
+        3. 其他情况下读取 LLM_MODEL_ID / LLM_API_KEY / LLM_BASE_URL
         """
-        provider = os.getenv("LLM_PROVIDER")
-        if provider == "qwen":
+        provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+        if provider == "deepseek":
+            self.model = model or os.getenv("DEEPSEEK_MODEL_ID") or "deepseek-flash"
+            apiKey = apiKey or os.getenv("DEEPSEEK_API_KEY")
+            baseUrl = baseUrl or os.getenv("DEEPSEEK_BASE_URL") or "https://api.deepseek.com"
+            if not apiKey or not apiKey.strip():
+                raise ValueError("请在 agent-development/.env 中填写 DEEPSEEK_API_KEY（DeepSeek 平台的 API 密钥）。")
+        elif provider == "qwen":
             self.model = model or os.getenv("QWEN_MODEL_ID")
             apiKey = apiKey or os.getenv("QWEN_API_KEY")
             baseUrl = baseUrl or os.getenv("QWEN_BASE_URL")

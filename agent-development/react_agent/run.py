@@ -9,6 +9,7 @@ from original_agent.build_first_agent import HelloAgentsLLM
 from .react_agent import ReActAgent
 from .search_tool import search
 from .tool_executor import ToolExecutor
+from .calculate_tool import calculate
 
 
 def main():
@@ -20,10 +21,17 @@ def main():
         "一个网页搜索引擎。当你需要回答关于时事、事实以及在你的知识库中"
         "找不到的信息时，应使用此工具。"
     )
+
+    calculate_description = (
+        "一个可以用于计算的工具"
+    )
+
     tool_executor.registerTool("Search", search_description, search)
 
+    tool_executor.registerTool("Calculate", "一个计算工具。", calculate)
+
     agent = ReActAgent(llm_client=llm, tool_executor=tool_executor)
-    question = "华为最新的手机是哪一款？它的主要卖点是什么？"
+    question = "计算 (123 + 456) × 789 / 12，并告诉我结果。"
 
     print(f"\n{'=' * 50}")
     print(f"问题: {question}")
