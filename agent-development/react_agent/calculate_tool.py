@@ -7,7 +7,7 @@ def calculate(expression: str) -> str:
     将公式转换为逆波兰表达式，用数字栈计算并返回结果字符串。
     支持非负整数输入、括号和二元四则运算，中间结果可以是负数或小数。
     '''
-    print(f"✍ 正在执行计算工具，公式：{expression}")
+    print(f"正在执行计算工具，公式：{expression}")
     
     postfix = calculate_expression(expression)
 

@@ -2,7 +2,6 @@
 
 from typing import Dict, Any
 
-from .search_tool import search
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -40,6 +39,8 @@ class ToolExecutor:
 
 # --- 工具初始化与使用示例 ---
 if __name__ == '__main__':
+    from .search_tool import search
+
     # 1. 初始化工具执行器
     toolExecutor = ToolExecutor()
 

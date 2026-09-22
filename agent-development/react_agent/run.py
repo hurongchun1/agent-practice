@@ -23,12 +23,14 @@ def main():
     )
 
     calculate_description = (
-        "一个可以用于计算的工具"
+        "计算四则运算表达式，支持非负整数、括号、+、-、*、/，"
+        "也接受 × 和 ÷。输入只放表达式，例如：(123 + 456) * 789 / 12；"
+        "不要放等号、问号或自然语言。"
     )
 
     tool_executor.registerTool("Search", search_description, search)
 
-    tool_executor.registerTool("Calculate", "一个计算工具。", calculate)
+    tool_executor.registerTool("Calculate", calculate_description, calculate)
 
     agent = ReActAgent(llm_client=llm, tool_executor=tool_executor)
     question = "计算 (123 + 456) × 789 / 12，并告诉我结果。"
