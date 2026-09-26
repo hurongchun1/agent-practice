@@ -19,12 +19,6 @@ action = "finish"时：
 - final_answer: 非空字符串，必填，必须是对用户问题的具体回答
 - 不需要 tool_name 和 tool_input
 
-当 History 中出现“工具调用失败”时：
-- 根据失败原因重新核对工具名和参数格式
-- 不要原样重复失败的调用
-- 只选择“可用工具”列表中存在的工具
-- 连续失败时应缩小参数、改选更匹配的工具，或在无需工具时使用 finish
-
 # 例子如下：
 {{"thought":"需要查询天气","action":"tool","tool_name":"Search","tool_input":"北京天气"}}
 {{"thought": "信息已经充分", "action": "finish", "final_answer": "基于查询结果看，北京今天又雨，建议出门带伞。"}}
