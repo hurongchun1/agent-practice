@@ -102,6 +102,20 @@ class ToolExecutor:
                 ok = True,
                 data = tool_data
             )
+        except ValueError as error:
+            return ToolResult(
+                ok=False,
+                tool_error=ToolError(
+                    stage="validation",
+                    code="INVALID_ARGUMENT",
+                    message=f"工具参数不合法：{error}",
+                    retryable=True,
+                ),
+                failed_call=FailedCall(
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                ),
+            )
         except Exception as error:
             # 返回 EXECUTION_FAILED
             return ToolResult(

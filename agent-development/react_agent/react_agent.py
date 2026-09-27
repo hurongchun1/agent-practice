@@ -1,19 +1,30 @@
 import json
+from typing import Protocol
 
-from original_agent.build_first_agent import HelloAgentsLLM
-from react_agent.search_tool import search
+from react_agent.common_result.tool_result import FailedCall, ToolError, ToolResult
+from react_agent.error_observation import build_error_observation
 from react_agent.system_prompt import REACT_PROMPT_TEMPLATE
 from react_agent.tool_executor import ToolExecutor
-from react_agent.common_result.tool_result import (
-    ToolError,ToolResult,FailedCall
-)
+
+
+class LLMClient(Protocol):
+    def think(self, messages: list[dict[str, str]]) -> str:
+        """根据消息生成模型输出。"""
+
 
 class ReActAgent():
 
-    def __init__(self,llm_client: HelloAgentsLLM,tool_executor: ToolExecutor,max_steps: int = 5):
+    def __init__(
+        self,
+        llm_client: LLMClient,
+        tool_executor: ToolExecutor,
+        max_steps: int = 5,
+        max_consecutive_failures: int = 3,
+    ):
         self.llm_client = llm_client
         self.tool_executor = tool_executor
         self.max_steps = max_steps
+        self.max_consecutive_failures = max_consecutive_failures
         self.history=[]
     
     # 这里是运行智能体的主入口
@@ -22,8 +33,10 @@ class ReActAgent():
         self.history = []
         # 当前步数
         current_step = 0
+        consecutive_failures = 0
+        last_failed_call = None
 
-        while current_step <= self.max_steps:
+        while current_step < self.max_steps:
             current_step += 1
             print(f"当前运行第{current_step}步")
 
@@ -41,11 +54,39 @@ class ReActAgent():
             response_text = self.llm_client.think(messages)
 
             if not response_text:
-                print("LLM没有返回任何内容")
-                break
+                parse_result = ToolResult(
+                    ok=False,
+                    tool_error=ToolError(
+                        stage="model_output",
+                        code="INVALID_MODEL_OUTPUT",
+                        message="LLM 没有返回任何内容",
+                        retryable=True,
+                    ),
+                )
+                consecutive_failures += 1
+                self._append_error_observation(parse_result)
+                if consecutive_failures >= self.max_consecutive_failures:
+                    return self._too_many_failures(last_failed_call)
+                continue
 
             # 3.解析LLM的输出
-            json_data = self._parse_output(response_text)
+            try:
+                json_data = self._parse_output(response_text)
+            except (json.JSONDecodeError, ValueError) as error:
+                parse_result = ToolResult(
+                    ok=False,
+                    tool_error=ToolError(
+                        stage="model_output",
+                        code="INVALID_MODEL_OUTPUT",
+                        message=str(error),
+                        retryable=True,
+                    ),
+                )
+                consecutive_failures += 1
+                self._append_error_observation(parse_result)
+                if consecutive_failures >= self.max_consecutive_failures:
+                    return self._too_many_failures(last_failed_call)
+                continue
 
             thought = json_data.get("thought")
             action = json_data.get("action")
@@ -54,12 +95,8 @@ class ReActAgent():
                 print(f"思考：{thought}")
             
 
-            if not action:
-                print("未能及析出有效的Action，流程终止")
-                break
-
             # 4.执行Action
-            if action.startswith("finish"):
+            if action == "finish":
                 # 如果是Finish指令，提取最终答案并结束
                 final_answer = json_data.get("final_answer")
                 print(f"最终答案：{final_answer}")
@@ -69,46 +106,62 @@ class ReActAgent():
             tool_name= json_data.get("tool_name")
             tool_input= json_data.get("tool_input")
 
-            if not tool_name or not tool_input:
-                # .. 处理无效Action格式 ...
-                continue
-            
-            if not isinstance(tool_name,str) or not tool_name.strip():
-                raise ValueError("tool_name 必须是非空字符串")
-
-            if not isinstance(tool_input,str) or not tool_input.strip():
-                raise ValueError("tool_input 必须是非空字符串")
-                
             print(f"行动：{tool_name} [{tool_input}]")
 
-            tool_function = self.tool_executor.getTool(tool_name)
+            tool_result = self.tool_executor.execute(tool_name, tool_input)
+            action_record = json.dumps(
+                {"tool_name": tool_name, "tool_input": tool_input},
+                ensure_ascii=False,
+            )
+            self.history.append(f"Action: {action_record}")
 
-            if not tool_function:
-                observation = f"错误：未找到名为 '{tool_name} 的工具。'"
+            if tool_result.ok:
+                consecutive_failures = 0
+                observation = str(tool_result.data)
+                print(f"观察：{observation}")
+                self.history.append(f"Observation: {observation}")
+                continue
 
-            else :
-                observation = tool_function(tool_input) # 调用真实工具
-            
-            print(f"观察：{observation}")
-
-            # 将本轮的Action和Observation添加到历史记录中
-            self.history.append(f"Action: {action}")
-            self.history.append(f"Observation: {observation}")
+            consecutive_failures += 1
+            last_failed_call = tool_result.failed_call
+            self._append_error_observation(tool_result)
+            if consecutive_failures >= self.max_consecutive_failures:
+                return self._too_many_failures(last_failed_call)
 
         # while 循环结束后执行：达到最大步数仍未得到最终答案
         print("已达到最大步数，流程终止。")
         return ToolResult(
-            ok = False,
-            tool_error = ToolError(
-                stage = "tool_execution",
-                code = "EXECUTION_FAILED",
-                message = "超过最大步数不允许执行",
-                retryable = False
+            ok=False,
+            tool_error=ToolError(
+                stage="agent_loop",
+                code="MAX_STEPS_EXCEEDED",
+                message="达到最大步数，仍未获得最终答案",
+                retryable=False,
             ),
-            failed_call = FailedCall(
-                tool_name = tool_name,
-                tool_input = tool_input
-            )
+            failed_call=last_failed_call,
+        )
+
+    def _append_error_observation(self, result: ToolResult) -> None:
+        observation = json.dumps(
+            build_error_observation(result),
+            ensure_ascii=False,
+        )
+        print(f"观察：{observation}")
+        self.history.append(f"Observation: {observation}")
+
+    def _too_many_failures(
+        self,
+        failed_call: FailedCall | None,
+    ) -> ToolResult:
+        return ToolResult(
+            ok=False,
+            tool_error=ToolError(
+                stage="agent_loop",
+                code="TOO_MANY_FAILURES",
+                message=f"连续失败已达 {self.max_consecutive_failures} 次，停止执行",
+                retryable=False,
+            ),
+            failed_call=failed_call,
         )
 
     def _parse_output(self,text:str):
@@ -150,6 +203,9 @@ class ReActAgent():
 
 
 if __name__ == '__main__':
+    from original_agent.build_first_agent import HelloAgentsLLM
+    from react_agent.search_tool import search
+
     llm = HelloAgentsLLM()
     tool_executor = ToolExecutor()
     search_desc = "一个网页搜索引擎。当你需要回答关于时事、事实以及在你的知识库中找不到的信息时，应使用此工具。"
