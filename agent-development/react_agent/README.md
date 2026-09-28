@@ -2,9 +2,58 @@
 
 本目录用于从零理解并实现 ReAct Agent。ReAct 是 **Reasoning + Acting** 的缩写：它让大语言模型在解决问题时，不只进行推理，也可以调用搜索、计算器或业务 API 等外部工具，并根据工具返回的结果继续调整判断。
 
-项目中用于解析 `Thought` 和 `Action` 的正则表达式说明，参见 [REGEX_GUIDE.md](./REGEX_GUIDE.md)。
+当前实现使用 JSON 解析模型动作；早期正则解析方案仅保留在 [REGEX_GUIDE.md](./REGEX_GUIDE.md) 中作为对照资料。
 
 > 当前目录已经实现了工具定义与调度、LLM 调用、Action 解析和多轮循环。统一入口是 `run.py`。
+
+## 快速启动
+
+所有命令都从 `agent-development` 目录执行：
+
+```powershell
+cd D:\pythonProject\gitProject\agent-practice\agent-development
+$env:PYTHONUTF8 = "1"
+```
+
+首次运行时安装依赖：
+
+```powershell
+python -m pip install -r ..\requirement.txt
+```
+
+启动 ReAct Agent：
+
+```powershell
+python -m react_agent.run
+```
+
+运行全部测试：
+
+```powershell
+python -m unittest discover -s react_agent/tests -t . -v
+```
+
+包内部使用相对导入，必须通过 `python -m` 按包运行。不要使用下面的直接文件启动方式：
+
+```powershell
+# 错误示例
+python react_agent/run.py
+python react_agent/react_agent.py
+```
+
+运行真实模型前，需要在 `.env` 中配置模型信息：
+
+```dotenv
+LLM_MODEL_ID=模型名称
+LLM_API_KEY=模型密钥
+LLM_BASE_URL=模型服务地址
+```
+
+调用搜索工具时还需要：
+
+```dotenv
+TAVILY_API_KEY=搜索服务密钥
+```
 
 ## 0. 从整体上理解 ReAct
 
@@ -116,14 +165,31 @@ Action: Finish[根据搜索结果生成的最终答案]
 
 ```text
 react_agent/
-├── __init__.py        # Python 包标识
-├── run.py             # 统一运行入口
-├── react_agent.py     # ReAct 主循环与输出解析
-├── system_prompt.py   # Thought/Action 提示词协议
-├── search_tool.py     # 基于 Tavily 的网页搜索工具
-├── tool_executor.py   # 工具注册、描述和查找
-├── REGEX_GUIDE.md     # 正则表达式说明
-└── README.md          # 原理与代码结构说明
+├── common_result/
+│   ├── tool_result.py          # 成功/失败统一结果
+│   └── tool_execution_error.py # 工具主动报告的结构化异常
+├── calculate_tool.py           # 计算器工具
+├── search_tool.py              # Tavily 搜索工具
+├── model_output.py             # 模型 JSON 输出的解析和校验
+├── agent_failure.py            # Agent 循环自身的失败结果
+├── agent_trace.py              # Action/Observation 历史记录
+├── tool_executor.py            # 工具注册、查找和安全执行
+├── error_observation.py        # 错误码到纠错动作的映射
+├── system_prompt.py            # 模型输出与纠错协议
+├── react_agent.py              # ReAct 循环编排
+├── run.py                      # 真实模型运行入口
+├── tests/                      # 按职责拆分的闭环测试
+└── README.md                   # 原理与实现说明
+```
+
+模块之间保持单向职责：
+
+```text
+model_output：只负责“模型说了什么、格式是否合法”
+tool_executor：只负责“工具是否存在、执行成功还是失败”
+error_observation：只负责“失败后应该给模型什么纠错指令”
+react_agent：只负责“下一步执行哪个阶段、何时继续或终止”
+run：只负责“组装真实依赖并启动示例”
 ```
 
 ### `search_tool.py`
@@ -154,6 +220,12 @@ react_agent/
 
 ```powershell
 python -m react_agent.run
+```
+
+包内部统一使用相对导入，因此不要直接执行 `python react_agent/run.py`。测试也从同一目录按包模式运行：
+
+```powershell
+python -m unittest discover -s react_agent/tests -t . -v
 ```
 
 ## 5. 完整 ReAct Agent 还需要什么
@@ -506,7 +578,69 @@ tokens：["(", "123", "+", "456", ")", "*", "789", "/", "12"]
 
 工具调用成功后会清零连续失败计数；连续失败达到 `max_consecutive_failures` 后返回 `TOO_MANY_FAILURES`，整体步数达到 `max_steps` 后返回 `MAX_STEPS_EXCEEDED`，避免无限重试和无效工具消耗。
 
-### 10.7 验收标准与实现边界
+### 10.7 `retryable` 什么时候是 True 或 False
+
+`retryable` 表示“这个错误是否可能通过下一轮纠正恢复”，不表示立即原样执行一次工具。
+
+| 情况 | retryable | 原因与处理 |
+| --- | --- | --- |
+| 模型输出格式错误 | `True` | 模型可以按 JSON 规则重新输出 |
+| 工具不存在 | `True` | 模型可以从可用工具中重新选择 |
+| 参数为空或不合法 | `True` | 模型可以根据报错修改参数 |
+| 明确的临时性执行失败 | `True` | 工具主动使用 `ToolExecutionError` 表明允许有限重试 |
+| 工具缺少必要配置 | `False` | 修改参数或更换表达方式无法补齐系统配置 |
+| 未知执行异常 | `False` | 系统无法确认重复调用是否安全或有效 |
+| 权限、业务规则等确定性限制 | `False` | 重复调用不能改变限制条件 |
+
+Agent 收到失败结果后的控制逻辑是：
+
+```text
+retryable=False
+  → 生成包含 STOP 的 Observation
+  → 立即返回失败结果，不再调用 LLM 或工具
+
+retryable=True
+  → 生成具体纠错动作并写入 History
+  → 下一轮由模型修改输出、重新选工具或修改参数
+  → 连续失败达到阈值后触发 TOO_MANY_FAILURES
+```
+
+当前示例中的具体取值如下：
+
+```text
+INVALID_MODEL_OUTPUT  → True  → FIX_MODEL_OUTPUT
+TOOL_NOT_FOUND        → True  → SELECT_ANOTHER_TOOL
+INVALID_ARGUMENT      → True  → RETRY_WITH_NEW_ARGUMENTS
+临时 EXECUTION_FAILED → True  → RETRY_LATER
+CONFIGURATION_ERROR   → False → STOP
+未知 EXECUTION_FAILED → False → STOP
+```
+
+### 10.8 从输入到终止的完整闭环
+
+```text
+用户问题
+  → LLM 输出 JSON
+  → ReActAgent 校验模型输出
+      ├─ 格式错误：INVALID_MODEL_OUTPUT，允许模型修正
+      └─ 格式正确：提取 tool_name 和 tool_input
+  → ToolExecutor.execute()
+      ├─ 工具不存在：TOOL_NOT_FOUND
+      ├─ 参数不合法：INVALID_ARGUMENT
+      ├─ 工具主动报告异常：保留其 code 和 retryable
+      ├─ 未知异常：EXECUTION_FAILED，默认不可重试
+      └─ 执行成功：ToolResult(ok=True, data=...)
+  → 失败结果转换为结构化 Observation
+      ├─ retryable=True：写入 History，进入下一轮纠正
+      └─ retryable=False：记录 STOP 后立即结束
+  → 成功结果写入 History，供模型决定继续调用或 finish
+  → 连续可纠正失败达到阈值：TOO_MANY_FAILURES
+  → 总步数达到上限：MAX_STEPS_EXCEEDED
+```
+
+`tests/` 使用预设响应的 `FakeLLM`，分别测试模型输出解析、工具执行和 Agent 闭环，不需要访问真实模型或搜索服务。
+
+### 10.9 验收标准与实现边界
 
 当前实现已验证：
 

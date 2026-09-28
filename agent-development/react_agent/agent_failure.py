@@ -1,0 +1,35 @@
+"""创建 Agent 循环自身产生的失败结果。"""
+
+from .common_result.tool_result import FailedCall, ToolResult
+
+
+def invalid_model_output(error: Exception) -> ToolResult:
+    return ToolResult.failure(
+        stage="model_output",
+        code="INVALID_MODEL_OUTPUT",
+        message=str(error),
+        retryable=True,
+    )
+
+
+def too_many_failures(
+    limit: int,
+    failed_call: FailedCall | None,
+) -> ToolResult:
+    return ToolResult.failure(
+        stage="agent_loop",
+        code="TOO_MANY_FAILURES",
+        message=f"连续失败已达 {limit} 次，停止执行",
+        retryable=False,
+        failed_call=failed_call,
+    )
+
+
+def max_steps_exceeded(failed_call: FailedCall | None) -> ToolResult:
+    return ToolResult.failure(
+        stage="agent_loop",
+        code="MAX_STEPS_EXCEEDED",
+        message="达到最大步数，仍未获得最终答案",
+        retryable=False,
+        failed_call=failed_call,
+    )

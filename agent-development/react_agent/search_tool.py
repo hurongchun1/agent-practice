@@ -1,16 +1,27 @@
-from tavily import TavilyClient
 import os
+
+from .common_result.tool_execution_error import ToolExecutionError
 
 def search(query: str) -> str:
     """
     一个基于 Tavily 的实战网页搜索引擎工具。
     它会智能地解析搜索结果，优先返回综合答案（include_answer）。
     """
-    print(f"🔍 正在执行 [Tavily] 网页搜索: {query}")
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("搜索内容不能为空")
+
+    print(f"正在执行 [Tavily] 网页搜索: {query}")
+
+    api_key = os.getenv("TAVILY_API_KEY")
+    if not api_key:
+        raise ToolExecutionError(
+            code="CONFIGURATION_ERROR",
+            message="搜索工具未配置 TAVILY_API_KEY",
+            retryable=False,
+        )
+
     try:
-        api_key = os.getenv("TAVILY_API_KEY")
-        if not api_key:
-            return "错误:TAVILY_API_KEY 未在 .env 文件中配置。"
+        from tavily import TavilyClient
 
         client = TavilyClient(api_key=api_key)
         response = client.search(query=query, search_depth="advanced", include_answer=True)
@@ -30,5 +41,21 @@ def search(query: str) -> str:
 
         return f"对不起，没有找到关于 '{query}' 的信息。"
 
-    except Exception as e:
-        return f"搜索时发生错误: {e}"
+    except ModuleNotFoundError as error:
+        raise ToolExecutionError(
+            code="CONFIGURATION_ERROR",
+            message="搜索工具缺少 tavily-python 依赖",
+            retryable=False,
+        ) from error
+    except TimeoutError as error:
+        raise ToolExecutionError(
+            code="EXECUTION_FAILED",
+            message=f"搜索服务暂时超时：{error}",
+            retryable=True,
+        ) from error
+    except Exception as error:
+        raise ToolExecutionError(
+            code="EXECUTION_FAILED",
+            message=f"搜索工具发生未知异常：{error}",
+            retryable=False,
+        ) from error
