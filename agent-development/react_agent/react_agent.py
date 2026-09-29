@@ -30,7 +30,10 @@ class ReActAgent:
         self.llm_client = llm_client
         self.tool_executor = tool_executor
         self.max_steps = max_steps
+        # 连续失败次数
         self.max_consecutive_failures = max_consecutive_failures
+        # 这个里面实现的包括：
+        # 对历史对话的记录、清空历史对话，基于回答的正确和错误来补充对应的观察
         self.trace = AgentTrace()
 
     @property
@@ -40,6 +43,7 @@ class ReActAgent:
     def run(self, question: str):
         self.trace.clear()
         failures = 0
+        # 最近一次失败的调用
         last_failed_call: FailedCall | None = None
 
         for step in range(1, self.max_steps + 1):
@@ -52,6 +56,7 @@ class ReActAgent:
                 stopped = self._handle_failure(
                     invalid_model_output(error), failures, last_failed_call,
                 )
+                # 如果是真值时才执行
                 if stopped:
                     return stopped
                 continue
@@ -76,6 +81,7 @@ class ReActAgent:
         print("已达到最大步数，流程终止。")
         return max_steps_exceeded(last_failed_call)
 
+    # 模型执行动作
     def _request_action(self, question: str) -> AgentAction:
         prompt = REACT_PROMPT_TEMPLATE.format(
             tools=self.tool_executor.getAvailableTools(),
@@ -104,8 +110,10 @@ class ReActAgent:
 
         if error is None:
             raise ValueError("失败结果必须包含 tool_error")
+        # 当错误不可重试时
         if not error.retryable:
             return result
+        # 当错误可以重试、且还没超过失败上限时
         if failures >= self.max_consecutive_failures:
             return too_many_failures(
                 self.max_consecutive_failures,

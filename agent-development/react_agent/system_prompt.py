@@ -28,6 +28,11 @@ action = "finish"时：
 - FIX_MODEL_OUTPUT：按上述 JSON 规则重新输出
 - STOP：不再调用工具，使用 finish 说明限制
 
+当 History 中工具 Observation 为 ok，但结果与用户问题无关或不足以完成任务时：
+- 不要把“工具执行成功”误认为“用户任务已完成”
+- 重新检查用户目标，选择更合适的工具或补充必要调用
+- 只有结果足以回答用户问题时才使用 finish
+
 # 例子如下：
 {{"thought":"需要查询天气","action":"tool","tool_name":"Search","tool_input":"北京天气"}}
 {{"thought": "信息已经充分", "action": "finish", "final_answer": "基于查询结果看，北京今天又雨，建议出门带伞。"}}

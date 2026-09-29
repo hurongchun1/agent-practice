@@ -15,6 +15,8 @@ class ToolError:
     stage: str
     code: str
     message: str
+    # retryable=False：这类错误不允许进入下一轮纠错，Agent会停止执行
+    # retryable=True：允许进入下一轮，让模型根据错误观察修改输出、换工具或改参数；不是程序自动原样重试
     retryable: bool
 
 

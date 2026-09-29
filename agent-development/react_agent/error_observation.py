@@ -33,6 +33,11 @@ STRATEGIES = {
         "请从当前可用工具中重新选择。",
         ("不要再次选择不存在的工具",),
     ),
+    "TOOL_NOT_APPLICABLE": Correction(
+        CorrectionAction.SELECT_ANOTHER_TOOL,
+        "当前工具不适合完成用户目标，请重新选择或补充其他工具调用。",
+        ("先核对用户目标与工具用途", "不要重复当前无效选择"),
+    ),
     "INVALID_ARGUMENT": Correction(
         CorrectionAction.RETRY_WITH_NEW_ARGUMENTS,
         "请根据错误信息和工具说明修改参数。",
@@ -69,6 +74,7 @@ def build_error_observation(result: ToolResult) -> dict[str, Any]:
         "correction": {
             "action": correction.action.value,
             "instruction": correction.instruction,
+            # 因为 correction.constraints 是元组，元组的提取里面的字符串，需要这样写法
             "constraints": list(correction.constraints),
         },
     }
